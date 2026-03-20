@@ -13,7 +13,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 # =========================================================
 BASE_COLOR_PDF = np.array([0.97, 0.90, 0.72]) 
 BASE_COLOR_PLOTLY = "#FFF4F4"             
-EDGE_COLOR = "#A78F8F"
+EDGE_COLOR = "#A78F8F" # สีเส้นขอบสำหรับ Plotly 3D
 
 STL_FILES = {
     '01': 'STL/BRICKIT_01_corebrick_2x2x2_connector.stl',
@@ -60,11 +60,9 @@ def get_optimal_tiling(length):
 
 def get_leg_tiling(length, is_bottom=False):
     res, rem = [], length
-    # 🔥 กฎเหล็ก: ถ้าเป็นชิ้นติดพื้น (is_bottom) ต้องเอา BRICKIT_01 (ความสูง 2) มารองก่อน 1 ชิ้นเสมอ
     if is_bottom and rem >= 2:
         res.append(2)
         rem -= 2
-    # ส่วนที่เหลือใช้ BRICKIT_03 (ความสูง 4) ต่อกันยาวๆ
     while rem >= 4:
         res.append(4)
         rem -= 4
@@ -135,14 +133,12 @@ def generate_smart_tiled_shelf(w=32, l=20, h=16):
                 current_z += dz
 
     def pack_shelf(z_level, is_top=False):
-        # 1. มุมชั้นวาง (Corners)
         for cx, cy in leg_positions:
             if is_top:
                 pack_block(cx, cx+2, cy, cy+2, z_level, z_level+2, is_top_corner=True)
             else:
                 pack_block(cx, cx+2, cy, cy+2, z_level, z_level+4, is_middle_corner=True)
 
-        # 2. คานแนวยาว (Y beams) 
         for y in y_legs:
             for i in range(len(x_legs)-1):
                 cx = x_legs[i]+2
@@ -150,7 +146,6 @@ def generate_smart_tiled_shelf(w=32, l=20, h=16):
                     pack_block(cx, cx+dx, y, y+2, z_level, z_level+thickness)
                     cx += dx
 
-        # 3. คานแนวลึก (X beams)
         for x in x_legs:
             for j in range(len(y_legs)-1):
                 cy = y_legs[j]+2
@@ -158,7 +153,6 @@ def generate_smart_tiled_shelf(w=32, l=20, h=16):
                     pack_block(x, x+2, cy, cy+dy, z_level, z_level+thickness)
                     cy += dy
 
-        # 4. พื้นชั้นวาง (Floor)
         for i in range(len(x_legs)-1):
             for j in range(len(y_legs)-1):
                 start_x, end_x = x_legs[i]+2, x_legs[i+1]
@@ -178,7 +172,6 @@ def generate_smart_tiled_shelf(w=32, l=20, h=16):
                         cy += dy
                     cx += dx
 
-    # 🔥 กฎการรันคอลัมน์และชั้นต่างๆ
     num_shelves = len(z_levels)
     for i in range(num_shelves):
         is_top = (i == num_shelves - 1)
@@ -258,13 +251,13 @@ def get_part_info(b, rh, rw, rl):
             R = R_z(90) @ flat_top_R
 
     elif dz >= 4 and dx == 2 and dy == 2:
-        if x == 0 and y == 0:        # มุมหน้า-ซ้าย
+        if x == 0 and y == 0:        
             R = np.array([[0, 0, 1], [0, -1, 0], [1, 0, 0]])     
-        elif x > 0 and y == 0:       # มุมหน้า-ขวา 
+        elif x > 0 and y == 0:       
             R = np.array([[0, 1, 0], [0, 0, 1], [1, 0, 0]])    
-        elif x == 0 and y > 0:       # มุมหลัง-ซ้าย
+        elif x == 0 and y > 0:       
             R = np.array([[0, -1, 0], [0, 0, -1], [1, 0, 0]])    
-        else:                        # มุมหลัง-ขวา
+        else:                        
             R = np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]])   
 
     elif dz == 2 and dy >= 4 and dx == 2: 
@@ -338,15 +331,16 @@ def build_scene_parts(blocks_used, rh, rw, rl):
     return scene_parts, type_counter
 
 # =========================================================
-# 🚀 6. ฟังก์ชันเรนเดอร์ STL 3D Plotly
+# 🚀 6. ฟังก์ชันเรนเดอร์ STL 3D Plotly (🔥เพิ่ม Edge ของ Bounding Box)
 # =========================================================
-def render_3d_with_plotly(scene_parts, title, width, length, height, type_counter):
+def render_3d_with_plotly(scene_parts, blocks_used, title, width, length, height):
     print("⏳ กำลังเรนเดอร์ 3D STL (Plotly)...")
     fig = go.Figure()
     
     all_x, all_y, all_z, all_i, all_j, all_k = [], [], [], [], [], []
     offset = 0
     
+    # 1. รวบรวมข้อมูลโมเดล 3D แบบทึบ
     for v_rot, _ in scene_parts:
         all_x.extend(v_rot[:, 0])
         all_y.extend(v_rot[:, 1])
@@ -359,13 +353,37 @@ def render_3d_with_plotly(scene_parts, title, width, length, height, type_counte
         offset += v_rot.shape[0]
         
     if all_x:
-        fig.add_trace(go.Mesh3d(x=all_x, y=all_y, z=all_z, i=all_i, j=all_j, k=all_k, color=BASE_COLOR_PLOTLY, flatshading=True))
+        fig.add_trace(go.Mesh3d(x=all_x, y=all_y, z=all_z, i=all_i, j=all_j, k=all_k, color=BASE_COLOR_PLOTLY, flatshading=True, name='Bricks'))
         
-    fig.update_layout(title=f"{title} | Size: {width}W x {length}D x {height}H", scene=dict(aspectmode='data'))
+    # 🔥 2. สร้างเส้นขอบ (Edge) เฉพาะเหลี่ยมมุมของแต่ละชิ้นส่วน
+    edge_x, edge_y, edge_z = [], [], []
+    for b in blocks_used:
+        xmin, xmax = b['x']*10, (b['x']+b['dx'])*10
+        ymin, ymax = b['y']*10, (b['y']+b['dy'])*10
+        zmin, zmax = b['z']*10, (b['z']+b['dz'])*10
+        
+        # กรอบล่าง
+        edge_x.extend([xmin, xmax, None, xmax, xmax, None, xmax, xmin, None, xmin, xmin, None])
+        edge_y.extend([ymin, ymin, None, ymin, ymax, None, ymax, ymax, None, ymax, ymin, None])
+        edge_z.extend([zmin, zmin, None, zmin, zmin, None, zmin, zmin, None, zmin, zmin, None])
+        
+        # กรอบบน
+        edge_x.extend([xmin, xmax, None, xmax, xmax, None, xmax, xmin, None, xmin, xmin, None])
+        edge_y.extend([ymin, ymin, None, ymin, ymax, None, ymax, ymax, None, ymax, ymin, None])
+        edge_z.extend([zmax, zmax, None, zmax, zmax, None, zmax, zmax, None, zmax, zmax, None])
+        
+        # เสาแนวตั้ง 4 มุม
+        edge_x.extend([xmin, xmin, None, xmax, xmax, None, xmax, xmax, None, xmin, xmin, None])
+        edge_y.extend([ymin, ymin, None, ymin, ymin, None, ymax, ymax, None, ymax, ymax, None])
+        edge_z.extend([zmin, zmax, None, zmin, zmax, None, zmin, zmax, None, zmin, zmax, None])
+
+    fig.add_trace(go.Scatter3d(x=edge_x, y=edge_y, z=edge_z, mode='lines', line=dict(color=EDGE_COLOR, width=2.5), hoverinfo='none', name='Edges'))
+    
+    fig.update_layout(title=f"{title} | Size: {width}W x {length}D x {height}H", scene=dict(aspectmode='data'), showlegend=False)
     fig.show()
 
 # =========================================================
-# 📄 7. ฟังก์ชันพิมพ์ Report เป็นไฟล์ PDF (เพิ่ม Filament Weight)
+# 📄 7. ฟังก์ชันพิมพ์ Report เป็นไฟล์ PDF (ไม่มีเส้นขอบ)
 # =========================================================
 def draw_stl_on_axis(ax, vertices, base_color, alpha_value, light_dir):
     poly3d, face_colors = [], []
@@ -384,6 +402,7 @@ def draw_stl_on_axis(ax, vertices, base_color, alpha_value, light_dir):
             rgb = base_color
             
         face_colors.append(np.array([rgb[0]*shade, rgb[1]*shade, rgb[2]*shade, alpha_value]))
+        
     ax.add_collection3d(Poly3DCollection(poly3d, facecolors=face_colors, edgecolor='none'))
 
 def export_assembly_guide_pdf(scene_parts, type_counter, filename="Brickit_Assembly_Manual.pdf", cols=2, rows=2):
@@ -463,20 +482,16 @@ def export_assembly_guide_pdf(scene_parts, type_counter, filename="Brickit_Assem
                 ax.set_zlim(-item_max_range, item_max_range)
                 ax.set_box_aspect([1,1,1])
                 
-            # เพิ่มน้ำหนักโชว์ที่หัวรูป
             ax.set_title(f"{part_name}\n>>> Qty: {count} pcs | Weight: {item_total_weight:.2f} g <<<", fontsize=11, fontweight='bold', color='#333333')
             ax.set_axis_off()
             
         plt.tight_layout(rect=[0, 0.05, 1, 0.93]) 
         
-        # ข้อความสรุปด้านล่างกระดาษ
         footer_text = f"TOTAL PARTS: {total_pcs} pcs   |   TOTAL ESTIMATED FILAMENT: {total_weight:.2f} g"
         fig.text(0.5, 0.02, footer_text, ha='center', fontsize=14, fontweight='bold', family='monospace', color='red')
         
         pdf.savefig(fig)
         plt.close(fig)
-        
-    print(f"✅ สร้างไฟล์ PDF สำเร็จ! ไปเปิดดูคู่มือประกอบสุดเท่ที่ {filename} ได้เลยครับ")
 
 # =========================================================
 # 📊 8. ฟังก์ชัน Print สรุปข้อมูลลง Console
@@ -521,8 +536,8 @@ def build_custom_model(w, l, h):
         # 1. Print สรุป BOM ออกทางหน้าจอ
         print_bom_summary(type_counter)
         
-        # 2. เรนเดอร์จอ 3D Plotly (หมุนดูได้อิสระ)
-        render_3d_with_plotly(scene_parts, title_text, new_w, new_l, new_h, type_counter)
+        # 2. เรนเดอร์จอ 3D Plotly (ส่ง blocks_data ไปเพื่อวาดขอบ)
+        render_3d_with_plotly(scene_parts, blocks_data, title_text, new_w, new_l, new_h)
         
         # 3. สร้าง Report PDF (คู่มือประกอบ)
         export_assembly_guide_pdf(scene_parts, type_counter, filename="Brickit_Assembly_Manual.pdf")

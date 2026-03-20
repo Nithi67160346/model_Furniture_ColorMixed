@@ -11,8 +11,9 @@ from matplotlib.backends.backend_pdf import PdfPages
 # =========================================================
 # 🎨 1. ตั้งค่าพื้นฐาน (ไฟล์ STL, สี และน้ำหนัก)
 # =========================================================
-BASE_COLOR_PDF = np.array([0.97, 0.90, 0.72]) 
-BASE_COLOR = "#FFF4F4"                
+BASE_COLOR_PDF = np.array([0.95, 0.95, 0.95]) 
+BASE_COLOR_PLOTLY = "#FFF4F4"                
+EDGE_COLOR = "#A78F8F" # สีขอบดำเข้มสำหรับ Plotly
 
 STL_FILES = {
     '01': 'STL/BRICKIT_01_corebrick_2x2x2_connector.stl',
@@ -170,7 +171,7 @@ def load_stl_mesh(filename):
     return np.array(verts).reshape(-1, 3)
 
 # =========================================================
-# 🔥 4. กฎเหล็ก 3 มิติ (THE ULTIMATE HARDCODED MATRIX) 🔥
+# 🔥 4. กฎเหล็ก 3 มิติ
 # =========================================================
 def get_part_info(b, rh):
     dx, dy, dz = b['dx'], b['dy'], b['dz']
@@ -268,22 +269,59 @@ def build_scene_parts(blocks_used, rh):
 
     return scene_parts, type_counter
 
-def render_3d_with_plotly(scene_parts, title, width, length, height):
+def render_3d_with_plotly(scene_parts, blocks_used, title, width, length, height):
     print("⏳ กำลังเรนเดอร์ 3D (Plotly)...")
     fig = go.Figure()
-    all_verts = [p[0] for p in scene_parts]
-    if all_verts:
-        final_v = np.vstack(all_verts)
-        num_tri = final_v.shape[0] // 3
-        i = np.arange(0, 3*num_tri, 3)
-        j = np.arange(1, 3*num_tri, 3)
-        k = np.arange(2, 3*num_tri, 3)
-        fig.add_trace(go.Mesh3d(x=final_v[:,0], y=final_v[:,1], z=final_v[:,2], i=i, j=j, k=k, color=BASE_COLOR_PLOTLY, flatshading=True))
-    fig.update_layout(title=f"{title} | Size: {width}W x {length}D x {height}H", scene=dict(aspectmode='data'))
+    
+    all_x, all_y, all_z, all_i, all_j, all_k = [], [], [], [], [], []
+    offset = 0
+    
+    for v_rot, _ in scene_parts:
+        all_x.extend(v_rot[:, 0])
+        all_y.extend(v_rot[:, 1])
+        all_z.extend(v_rot[:, 2])
+        
+        num_tri = v_rot.shape[0] // 3
+        all_i.extend(np.arange(0, 3*num_tri, 3) + offset)
+        all_j.extend(np.arange(1, 3*num_tri, 3) + offset)
+        all_k.extend(np.arange(2, 3*num_tri, 3) + offset)
+        offset += v_rot.shape[0]
+            
+    if all_x:
+        # วาด 3D Model ทึบแบบไม่มีเส้นลวดสามเหลี่ยม
+        fig.add_trace(go.Mesh3d(x=all_x, y=all_y, z=all_z, i=all_i, j=all_j, k=all_k, color=BASE_COLOR_PLOTLY, flatshading=True, name='Bricks'))
+    
+    # 🔥 TRICK: สร้าง "เส้นขอบ Bounding Box" สีดำเฉพาะเหลี่ยมมุมของแต่ละชิ้น
+    # ทำให้ดูเหมือน CAD หรือ Blueprint โดยไม่มีเส้นสามเหลี่ยมยุ่งเหยิงกวนใจ
+    edge_x, edge_y, edge_z = [], [], []
+    for b in blocks_used:
+        xmin, xmax = b['x']*10, (b['x']+b['dx'])*10
+        ymin, ymax = b['y']*10, (b['y']+b['dy'])*10
+        zmin, zmax = b['z']*10, (b['z']+b['dz'])*10
+        
+        # วาดกรอบสี่เหลี่ยมด้านล่าง
+        edge_x.extend([xmin, xmax, None, xmax, xmax, None, xmax, xmin, None, xmin, xmin, None])
+        edge_y.extend([ymin, ymin, None, ymin, ymax, None, ymax, ymax, None, ymax, ymin, None])
+        edge_z.extend([zmin, zmin, None, zmin, zmin, None, zmin, zmin, None, zmin, zmin, None])
+        
+        # วาดกรอบสี่เหลี่ยมด้านบน
+        edge_x.extend([xmin, xmax, None, xmax, xmax, None, xmax, xmin, None, xmin, xmin, None])
+        edge_y.extend([ymin, ymin, None, ymin, ymax, None, ymax, ymax, None, ymax, ymin, None])
+        edge_z.extend([zmax, zmax, None, zmax, zmax, None, zmax, zmax, None, zmax, zmax, None])
+        
+        # วาดเสาเชื่อมบน-ล่าง 4 มุม
+        edge_x.extend([xmin, xmin, None, xmax, xmax, None, xmax, xmax, None, xmin, xmin, None])
+        edge_y.extend([ymin, ymin, None, ymin, ymin, None, ymax, ymax, None, ymax, ymax, None])
+        edge_z.extend([zmin, zmax, None, zmin, zmax, None, zmin, zmax, None, zmin, zmax, None])
+
+    # ยัดเส้นขอบลง Plotly
+    fig.add_trace(go.Scatter3d(x=edge_x, y=edge_y, z=edge_z, mode='lines', line=dict(color=EDGE_COLOR, width=2.5), hoverinfo='none', name='Edges'))
+
+    fig.update_layout(title=f"{title} | Size: {width}W x {length}D x {height}H", scene=dict(aspectmode='data'), showlegend=False)
     fig.show()
 
 # =========================================================
-# 📄 6. โหลด STL และสร้าง PDF (รวมน้ำหนัก Filament)
+# 📄 6. โหลด STL และสร้าง PDF (ใน PDF ไม่มีเส้นขอบกวนใจ)
 # =========================================================
 def draw_stl_on_axis(ax, vertices, base_color, alpha_value, light_dir):
     poly3d, face_colors = [], []
@@ -297,10 +335,13 @@ def draw_stl_on_axis(ax, vertices, base_color, alpha_value, light_dir):
         shade = 0.4 + 0.6 * intensity
         rgb = mcolors.to_rgb(base_color)
         face_colors.append(np.array([rgb[0]*shade, rgb[1]*shade, rgb[2]*shade, alpha_value]))
+        
+    # ปิด edgecolor ออกไป เพื่อความคลีนในหน้า PDF แบบที่ลูกค้าต้องการ
     ax.add_collection3d(Poly3DCollection(poly3d, facecolors=face_colors, edgecolor='none'))
 
 def export_assembly_guide_pdf(scene_parts, type_counter, filename="ShoeRack_Manual.pdf", cols=2, rows=2):
     if not scene_parts: return
+    
     all_verts = np.vstack([p[0] for p in scene_parts])
     max_range = (all_verts.max(axis=0) - all_verts.min(axis=0)).max() / 2.0
     mid = all_verts.mean(axis=0)
@@ -320,22 +361,30 @@ def export_assembly_guide_pdf(scene_parts, type_counter, filename="ShoeRack_Manu
                 hi = start + idx
                 if hi >= len(scene_parts): break
                 ax = fig.add_subplot(rows, cols, idx + 1, projection='3d')
+                
+                # วาดโมเดล
                 for i, (v, pid) in enumerate(scene_parts):
                     if i > hi: continue 
-                    alpha = 1.0 if i == hi else 0.2
+                    
+                    alpha = 1.0 if i == hi else 0.4
                     draw_color = block_color_map[pid] if i == hi else BASE_COLOR_PDF
                     draw_stl_on_axis(ax, v, draw_color, alpha, light_dir)
+                    
                 ax.set_xlim(mid[0] - max_range, mid[0] + max_range)
                 ax.set_ylim(mid[1] - max_range, mid[1] + max_range)
                 ax.set_zlim(mid[2] - max_range, mid[2] + max_range)
                 ax.set_box_aspect([1,1,1])
-                ax.set_title(f"Step {hi + 1}\nAdd: {STL_FILES[scene_parts[hi][1]].replace('STL/','')}", fontsize=10)
+                
+                ax.view_init(elev=25, azim=-45) 
+                
+                part_name = STL_FILES[scene_parts[hi][1]].split('/')[-1]
+                ax.set_title(f"Step {hi + 1}\nAdd: {part_name}", fontsize=10)
                 ax.set_axis_off()
             plt.tight_layout()
             pdf.savefig(fig)
             plt.close(fig)
             
-        # --- ส่วนที่ 2: BILL OF MATERIALS (BOM) แบบ 3D พร้อมการคำนวณน้ำหนัก ---
+        # --- ส่วนที่ 2: BILL OF MATERIALS (BOM) ---
         print("📸 กำลังเรนเดอร์หน้า Bill of Materials แบบ 3D...")
         unique_pids = sorted(type_counter.keys())
         num_items = len(unique_pids)
@@ -363,6 +412,7 @@ def export_assembly_guide_pdf(scene_parts, type_counter, filename="ShoeRack_Manu
                 v_center = v - v.mean(axis=0)
                 item_max_range = (v_center.max(axis=0) - v_center.min(axis=0)).max() / 2.0 * 1.2
                 draw_color = block_color_map[pid]
+                
                 draw_stl_on_axis(ax, v_center, draw_color, 1.0, light_dir)
                 
                 ax.set_xlim(-item_max_range, item_max_range)
@@ -416,17 +466,16 @@ def print_bom_summary(type_counter):
 # 🎮 จุดทดสอบการเรียกใช้งาน 
 # =========================================================
 def build_furniture():
-    blocks_data, rw, rl, rh = generate_shoe_rack(w=16, l=16, h=46, has_walls=False)
+    blocks_data, rw, rl, rh = generate_shoe_rack(w=36, l=16, h=46, has_walls=False)
     scene_parts, type_counter = build_scene_parts(blocks_data, rh)
     
     if scene_parts:
-        # 1. Print สรุป BOM ออกหน้าจอ
         print_bom_summary(type_counter)
         
-        # 2. เรนเดอร์ 3D
-        render_3d_with_plotly(scene_parts, "Perfect Shoe Rack", rw, rl, rh)
+        # 🟢 โชว์ Plotly 3D แบบมีเส้นขอบดำ (Clean Bounding Box Edges)
+        render_3d_with_plotly(scene_parts, blocks_data, "Perfect Shoe Rack with Clean Edges", rw, rl, rh)
         
-        # 3. สร้าง PDF
+        # 🟢 สร้าง PDF Manual แบบไม่มีเส้นขอบ (No Edges)
         export_assembly_guide_pdf(scene_parts, type_counter, filename="ShoeRack_Flawless_Manual.pdf")
     else:
         print("⚠️ ไม่พบไฟล์ STL ในโฟลเดอร์ กรุณาตรวจสอบพาร์ทไฟล์!")
